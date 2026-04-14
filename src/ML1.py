@@ -4,7 +4,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 
 #transformation of variables is important to ensure equal importance of each variable in model training
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, PolynomialFeatures
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, PolynomialFeatures, OneHotEncoder
 
 X = np.array([[1000, 0.01, 300],
               [1200, 0.06, 350],
@@ -53,3 +53,14 @@ y_pred = model.predict(X_poly_scaled)
 plt.plot(x, y_pred, color='red')
 plt.scatter(x, y)
 plt.show()
+
+#example of one-hot encoding for categorical data to prevent favoring certain number in ordinal values
+
+x = np.array([['type A'],
+              ['type B'],
+              ['type C']
+              ])
+ohe = OneHotEncoder(sparse=False)
+X_encoded = ohe.fit_transform(x) #change to numerical form
+
+
