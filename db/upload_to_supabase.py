@@ -4,6 +4,12 @@ Start met de eenvoudigste dataset: batch_reactor_yield.csv
 """
 
 import os
+from pathlib import Path
+
+# Altijd vanuit project root draaien zodat relatieve paden werken
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(PROJECT_ROOT)
+
 import pandas as pd
 from supabase import create_client
 from dotenv import load_dotenv
