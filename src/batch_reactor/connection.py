@@ -9,11 +9,13 @@ key = os.getenv("SUPABASE_KEY")
 supabase = supabase.create_client(url, key)
 
 #fetch data from database
-response = (
-    supabase.table('batch_reactor')
-    .select('*')
-    .execute()
-)
+
+def fetch(tabel):
+    return (
+        supabase.table(tabel)
+        .select('*')
+        .execute()
+    )
 
 def test():
     print("test from connection.py")
