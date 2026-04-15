@@ -4187,6 +4187,670 @@ def generate_membrane_filtration():
     print(f"membraan_filtratie.csv: {len(df)} rijen, {len(df.columns)} kolommen")
 
 
+def generate_sensor_fusion():
+    """
+    Dataset 41: Sensor Fusion - Meerdere sensoren meten dezelfde procesgrootheid
+    met verschillende nauwkeurigheden, sampletijden en faalmodi.
+    Doel: Sensor fusion, sensor selectie, fault-tolerant estimation, redundantie-analyse.
+    """
+    n_hours = 60 * 24  # 60 dagen, per uur (basistijd)
+    n = n_hours
+    t = np.arange(n)
+    timestamps = [datetime(2025, 10, 1) + timedelta(hours=int(h)) for h in t]
+
+    # --- Werkelijke proceswaarden (ground truth) ---
+    true_temp = 150 + 10 * np.sin(2 * np.pi * t / (24 * 7)) + 3 * np.sin(2 * np.pi * t / 24) + np.random.normal(0, 0.1, n)
+    true_pressure = 5.0 + 0.5 * np.sin(2 * np.pi * t / (24 * 3)) + np.random.normal(0, 0.01, n)
+    true_flow = 100 + 15 * np.sin(2 * np.pi * t / 24) + np.random.normal(0, 0.5, n)
+    true_level = 60 + 10 * np.sin(2 * np.pi * t / (24 * 2)) + np.random.normal(0, 0.2, n)
+
+    # --- TEMPERATUUR: 4 sensoren (thermokoppel, RTD, IR, inline) ---
+    # Sensor T1: Thermokoppel K-type (snel, medium nauwkeurig)
+    t1 = true_temp + np.random.normal(0, 1.5, n)
+    t1_status = np.full(n, "ok", dtype=object)
+    # Drift na dag 30
+    t1[30*24:] += np.linspace(0, 4, n - 30*24)
+    t1_status[45*24:] = "drift"
+    # Uitval dag 50-51
+    t1[50*24:51*24] = np.nan
+    t1_status[50*24:51*24] = "uitval"
+
+    # Sensor T2: RTD Pt100 (traag, zeer nauwkeurig)
+    t2_delay = 3  # 3 uur vertraging
+    t2 = np.roll(true_temp, t2_delay) + np.random.normal(0, 0.3, n)
+    t2[:t2_delay] = true_temp[:t2_delay] + np.random.normal(0, 0.3, t2_delay)
+    t2_status = np.full(n, "ok", dtype=object)
+
+    # Sensor T3: IR pyrometer (snel, maar ruis bij stoom/vocht)
+    t3 = true_temp + np.random.normal(0, 0.8, n)
+    # Periodieke verstoring door stoom
+    steam_events = np.random.random(n) < 0.05
+    t3[steam_events] += np.random.uniform(5, 20, steam_events.sum())
+    t3_status = np.where(steam_events, "stoom_interferentie", "ok")
+
+    # Sensor T4: Inline thermistor (goedkoop, beperkt bereik, niet-lineair)
+    t4 = true_temp + 0.01 * (true_temp - 150) ** 2 + np.random.normal(0, 2, n)  # niet-lineaire fout
+    t4_status = np.full(n, "ok", dtype=object)
+    # Saturatie boven 165°C
+    t4_saturated = t4 > 165
+    t4[t4_saturated] = 165 + np.random.normal(0, 0.5, t4_saturated.sum())
+    t4_status[t4_saturated] = "saturatie"
+
+    # --- DRUK: 3 sensoren ---
+    p1 = true_pressure + np.random.normal(0, 0.05, n)  # Capacitief (nauwkeurig)
+    p1_status = np.full(n, "ok", dtype=object)
+
+    p2 = true_pressure + np.random.normal(0, 0.1, n)  # Piezo-resistief
+    p2_status = np.full(n, "ok", dtype=object)
+    # Bevriezing (impulsleiding) dag 20-22
+    p2[20*24:22*24] = p2[20*24]  # bevroren waarde
+    p2_status[20*24:22*24] = "bevroren"
+
+    p3 = true_pressure + np.random.normal(0, 0.15, n)  # Bourdon (oud, minder nauwkeurig)
+    p3_status = np.full(n, "ok", dtype=object)
+    # Hysterese
+    for i in range(1, n):
+        if abs(true_pressure[i] - true_pressure[i-1]) > 0.1:
+            p3[i] += 0.05 * np.sign(true_pressure[i] - true_pressure[i-1])
+
+    # --- DEBIET: 3 sensoren ---
+    f1 = true_flow + np.random.normal(0, 1, n)  # Coriolis (zeer nauwkeurig)
+    f1_status = np.full(n, "ok", dtype=object)
+
+    f2 = true_flow + np.random.normal(0, 3, n)  # Vortex
+    f2_status = np.full(n, "ok", dtype=object)
+    # Slecht bij laag debiet
+    low_flow = true_flow < 90
+    f2[low_flow] += np.random.normal(0, 8, low_flow.sum())
+    f2_status[low_flow] = "laag_debiet_onbetrouwbaar"
+
+    f3 = true_flow * (1 + 0.001 * t / 24) + np.random.normal(0, 2, n)  # DP (kalibratie drift)
+    f3_status = np.full(n, "ok", dtype=object)
+    f3_status[40*24:] = "kalibratie_nodig"
+
+    # --- NIVEAU: 2 sensoren ---
+    l1 = true_level + np.random.normal(0, 0.5, n)  # Radar
+    l1_status = np.full(n, "ok", dtype=object)
+    # Schuim interferentie
+    foam = np.random.random(n) < 0.03
+    l1[foam] += np.random.uniform(-5, 10, foam.sum())
+    l1_status[foam] = "schuim"
+
+    l2 = true_level + np.random.normal(0, 1, n)  # DP niveaumeting
+    l2_status = np.full(n, "ok", dtype=object)
+
+    # --- Beste schatting (gewogen gemiddelde als referentie) ---
+    # Temperatuur: gewogen naar nauwkeurigheid (negeer NaN/uitval)
+    best_temp = np.nanmean([
+        np.where(np.isnan(t1), np.nan, t1),
+        t2, t3, t4
+    ], axis=0)
+
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        # Ground truth
+        "temp_werkelijk_C": np.round(true_temp, 2),
+        "druk_werkelijk_bar": np.round(true_pressure, 3),
+        "debiet_werkelijk_kgh": np.round(true_flow, 1),
+        "niveau_werkelijk_pct": np.round(true_level, 1),
+        # Temperatuur sensoren
+        "T1_thermokoppel_C": [round(v, 1) if not np.isnan(v) else None for v in t1],
+        "T1_status": t1_status,
+        "T2_RTD_C": np.round(t2, 2),
+        "T2_status": t2_status,
+        "T3_IR_C": np.round(t3, 1),
+        "T3_status": t3_status,
+        "T4_thermistor_C": np.round(t4, 1),
+        "T4_status": t4_status,
+        # Druk sensoren
+        "P1_capacitief_bar": np.round(p1, 3),
+        "P1_status": p1_status,
+        "P2_piezo_bar": np.round(p2, 3),
+        "P2_status": p2_status,
+        "P3_bourdon_bar": np.round(p3, 3),
+        "P3_status": p3_status,
+        # Debiet sensoren
+        "F1_coriolis_kgh": np.round(f1, 1),
+        "F1_status": f1_status,
+        "F2_vortex_kgh": np.round(f2, 1),
+        "F2_status": f2_status,
+        "F3_DP_kgh": np.round(f3, 1),
+        "F3_status": f3_status,
+        # Niveau sensoren
+        "L1_radar_pct": np.round(l1, 1),
+        "L1_status": l1_status,
+        "L2_DP_pct": np.round(l2, 1),
+        "L2_status": l2_status,
+    })
+
+    df.to_csv("data/sensor_fusion.csv", index=False)
+    print(f"sensor_fusion.csv: {len(df)} rijen, {len(df.columns)} kolommen")
+
+
+def generate_concept_drift_longterm():
+    """
+    Dataset 42: Concept Drift over meerdere jaren - Productieproces met geleidelijke
+    en abrupte veranderingen over 5 jaar. Model veroudering simulatie.
+    Doel: Concept drift detectie, adaptief modelleren, model monitoring, retraining strategie.
+    """
+    n_days = 5 * 365  # 5 jaar
+    n = n_days * 24  # per uur
+    t = np.arange(n)
+    timestamps = [datetime(2020, 1, 1) + timedelta(hours=int(h)) for h in t]
+
+    # Seizoenspatroon (jaarlijks)
+    day_of_year = np.array([(datetime(2020, 1, 1) + timedelta(hours=int(h))).timetuple().tm_yday for h in t])
+    season = np.sin(2 * np.pi * day_of_year / 365)
+
+    # Dag/nacht
+    hour = np.array([(datetime(2020, 1, 1) + timedelta(hours=int(h))).hour for h in t])
+    daynight = np.sin(2 * np.pi * hour / 24)
+
+    # Input features (langzaam veranderend)
+    feed_quality = 0.95 + 0.02 * season + np.random.normal(0, 0.005, n)
+    temperature = 150 + 5 * season + 2 * daynight + np.random.normal(0, 0.5, n)
+    pressure = 5 + 0.3 * season + np.random.normal(0, 0.05, n)
+    flow = 100 + 10 * daynight + np.random.normal(0, 1, n)
+    catalyst_age = np.zeros(n)
+    ambient_temp = 15 + 12 * season + 5 * daynight + np.random.normal(0, 1, n)
+
+    # --- Drift mechanismen ---
+
+    # 1. Geleidelijke drift: katalysator veroudering (elke 6 maanden vervangen)
+    replacement_interval = 180 * 24  # uur
+    for i in range(n):
+        catalyst_age[i] = (i % replacement_interval) / 24  # dagen
+
+    catalyst_factor = 1 - 0.0005 * catalyst_age  # geleidelijke degradatie
+
+    # 2. Abrupte verandering: nieuwe grondstof leverancier (jaar 2, maand 3)
+    supplier_change = 2 * 365 * 24 + 3 * 30 * 24
+    supplier_effect = np.zeros(n)
+    supplier_effect[supplier_change:] = 0.03  # licht hogere conversie
+
+    # 3. Geleidelijke verandering: fouling in warmtewisselaar
+    fouling_buildup = np.zeros(n)
+    last_clean = 0
+    for i in range(n):
+        days_since = (i - last_clean) / 24
+        fouling_buildup[i] = 0.001 * days_since ** 1.2
+        # Schoonmaak elke 90 dagen
+        if days_since > 90:
+            fouling_buildup[i] = 0
+            last_clean = i
+
+    # 4. Abrupte verandering: equipment upgrade (jaar 3, maand 6)
+    upgrade_time = 3 * 365 * 24 + 6 * 30 * 24
+    upgrade_effect = np.zeros(n)
+    upgrade_effect[upgrade_time:] = -0.02  # betere efficiency, minder energieverbruik
+
+    # 5. Regelgeving verandering: lagere emissienorm (jaar 4)
+    regulation_time = 4 * 365 * 24
+    regulation_effect = np.zeros(n)
+    regulation_effect[regulation_time:] = 0.01  # operatie aangepast
+
+    # Target: conversie
+    conversion = (
+        0.85 * catalyst_factor
+        + supplier_effect
+        + 0.002 * (temperature - 150)
+        - 0.001 * (flow - 100)
+        + 0.01 * (feed_quality - 0.95) * 10
+        - fouling_buildup * 5
+        + upgrade_effect
+        + regulation_effect
+        + np.random.normal(0, 0.005, n)
+    )
+    conversion = np.clip(conversion, 0.5, 0.99)
+
+    # Target: energieverbruik
+    energy = (
+        50
+        + 0.2 * flow
+        + 0.1 * temperature
+        + 10 * fouling_buildup * 100
+        - 5 * np.where(np.arange(n) >= upgrade_time, 1, 0)  # na upgrade lager
+        + 3 * np.maximum(0, ambient_temp - 25) / 10
+        + np.random.normal(0, 1, n)
+    )
+
+    # Drift labels
+    drift_type = np.full(n, "geen", dtype=object)
+
+    # Geleidelijke drifts
+    for i in range(n):
+        if catalyst_age[i] > 120:
+            drift_type[i] = "katalysator_veroudering"
+        if fouling_buildup[i] > 0.003:
+            drift_type[i] = "fouling"
+
+    # Abrupte drifts (window rond event)
+    window = 7 * 24
+    drift_type[supplier_change:supplier_change+window] = "leverancier_wissel"
+    drift_type[upgrade_time:upgrade_time+window] = "equipment_upgrade"
+    drift_type[regulation_time:regulation_time+window] = "regelgeving_aanpassing"
+
+    # Jaar en kwartaal (voor analyse)
+    year = np.array([(datetime(2020, 1, 1) + timedelta(hours=int(h))).year for h in t])
+    quarter = np.array([f"Q{((datetime(2020, 1, 1) + timedelta(hours=int(h))).month - 1) // 3 + 1}" for h in t])
+
+    # Model performance indicatoren (gesimuleerd)
+    # Een model getraind op jaar 1 data
+    model_baseline_pred = (
+        0.85
+        + 0.002 * (temperature - 150)
+        - 0.001 * (flow - 100)
+        + 0.01 * (feed_quality - 0.95) * 10
+        + np.random.normal(0, 0.005, n)
+    )
+    model_error = conversion - model_baseline_pred
+    model_mae = np.abs(model_error)
+
+    # Downsample naar elke 4 uur voor bestandsgrootte
+    idx = np.arange(0, n, 4)
+    df = pd.DataFrame({
+        "timestamp": [timestamps[i] for i in idx],
+        "jaar": year[idx],
+        "kwartaal": quarter[idx],
+        "voeding_kwaliteit": np.round(feed_quality[idx], 4),
+        "temperatuur_C": np.round(temperature[idx], 1),
+        "druk_bar": np.round(pressure[idx], 2),
+        "debiet_kgh": np.round(flow[idx], 1),
+        "omgevingstemp_C": np.round(ambient_temp[idx], 1),
+        "katalysator_leeftijd_dagen": np.round(catalyst_age[idx], 0).astype(int),
+        "fouling_index": np.round(fouling_buildup[idx], 5),
+        "conversie": np.round(conversion[idx], 4),
+        "energieverbruik_kWh": np.round(energy[idx], 1),
+        "model_voorspelling": np.round(model_baseline_pred[idx], 4),
+        "model_fout": np.round(model_error[idx], 5),
+        "model_abs_fout": np.round(model_mae[idx], 5),
+        "drift_type": drift_type[idx],
+    })
+
+    df.to_csv("data/concept_drift_5jaar.csv", index=False)
+    print(f"concept_drift_5jaar.csv: {len(df)} rijen, {len(df.columns)} kolommen")
+
+
+def generate_causal_inference():
+    """
+    Dataset 43: Causal Inference - Chemisch proces met bekende causale structuur (DAG).
+    Inclusief interventies, confounders, en mediators.
+    Doel: Causal discovery, causal effect estimation, do-calculus, counterfactuals.
+    """
+    n = 5000
+
+    # Bekende causale structuur (DAG):
+    # omgeving -> koelwater_temp -> reactor_temp -> conversie -> opbrengst
+    # omgeving -> luchtvochtigheid -> vochtgehalte_product
+    # katalysator_type -> activeringsenergie -> reactor_temp -> conversie
+    # katalysator_type -> selectiviteit -> opbrengst
+    # druk -> reactor_temp (confounder)
+    # druk -> conversie
+    # roersnelheid -> menging -> conversie
+    # roersnelheid -> energieverbruik
+    # operator -> roersnelheid (confounder: ervaren operators kiezen betere snelheid)
+
+    # Exogene variabelen
+    omgevingstemp = np.random.normal(20, 8, n)  # seizoensgebonden
+    operator_ervaring = np.random.uniform(0, 20, n)  # jaren
+    katalysator_type = np.random.choice(["Pd/C", "Pt/Al2O3", "Ni/SiO2"], n, p=[0.4, 0.35, 0.25])
+
+    # Causale keten
+    # Operator -> roersnelheid (ervaren operators kiezen optimaler)
+    roersnelheid = 200 + 5 * operator_ervaring + np.random.normal(0, 20, n)
+    roersnelheid = np.clip(roersnelheid, 50, 500)
+
+    # Omgeving -> koelwater temp
+    koelwater_temp = 15 + 0.4 * omgevingstemp + np.random.normal(0, 1, n)
+
+    # Omgeving -> luchtvochtigheid
+    luchtvochtigheid = 50 + 0.8 * omgevingstemp + np.random.normal(0, 5, n)
+    luchtvochtigheid = np.clip(luchtvochtigheid, 20, 95)
+
+    # Druk (onafhankelijk instelbaar, maar beinvloedt meerdere dingen)
+    druk = np.random.uniform(1, 10, n)
+
+    # Katalysator -> activeringsenergie
+    ea_map = {"Pd/C": 50, "Pt/Al2O3": 45, "Ni/SiO2": 60}
+    activeringsenergie = np.array([ea_map[k] for k in katalysator_type]) + np.random.normal(0, 2, n)
+
+    # Reactor temperatuur (beïnvloed door koelwater, druk, activeringsenergie)
+    reactor_temp = (
+        150
+        + 0.5 * (koelwater_temp - 15)
+        + 2 * (druk - 5)
+        - 0.3 * (activeringsenergie - 50)
+        + np.random.normal(0, 2, n)
+    )
+
+    # Menging (beïnvloed door roersnelheid, niet-lineair)
+    menging = 0.5 + 0.4 * (1 - np.exp(-roersnelheid / 200)) + np.random.normal(0, 0.03, n)
+    menging = np.clip(menging, 0.1, 1.0)
+
+    # Katalysator -> selectiviteit
+    sel_map = {"Pd/C": 0.90, "Pt/Al2O3": 0.85, "Ni/SiO2": 0.80}
+    selectiviteit = np.array([sel_map[k] for k in katalysator_type])
+    selectiviteit += 0.01 * (reactor_temp - 150) / 10 + np.random.normal(0, 0.02, n)
+    selectiviteit = np.clip(selectiviteit, 0.5, 0.99)
+
+    # Conversie (beïnvloed door temp, druk, menging, activeringsenergie)
+    conversie = (
+        0.6
+        + 0.003 * (reactor_temp - 150)
+        + 0.01 * (druk - 5)
+        + 0.15 * menging
+        - 0.002 * (activeringsenergie - 50)
+        + np.random.normal(0, 0.02, n)
+    )
+    conversie = np.clip(conversie, 0.1, 0.99)
+
+    # Opbrengst (conversie * selectiviteit)
+    opbrengst = conversie * selectiviteit * 100 + np.random.normal(0, 1, n)
+    opbrengst = np.clip(opbrengst, 5, 99)
+
+    # Energieverbruik (roersnelheid + temperatuur)
+    energieverbruik = 10 + 0.05 * roersnelheid + 0.2 * reactor_temp + np.random.normal(0, 2, n)
+
+    # Productvochtgehalte (luchtvochtigheid + temperatuur)
+    vochtgehalte_product = 2 + 0.02 * luchtvochtigheid - 0.01 * reactor_temp + np.random.normal(0, 0.3, n)
+    vochtgehalte_product = np.clip(vochtgehalte_product, 0.1, 8)
+
+    # Interventies (sommige rijen zijn experimenten waar een variabele geforceerd is)
+    interventie = np.full(n, "observatie", dtype=object)
+
+    # do(roersnelheid=300) experimenten
+    interv_idx = np.random.choice(n, 200, replace=False)
+    interventie[interv_idx] = "do(roersnelheid=300)"
+    roersnelheid[interv_idx] = 300
+
+    # do(druk=8) experimenten
+    interv_idx2 = np.random.choice(np.setdiff1d(np.arange(n), interv_idx), 200, replace=False)
+    interventie[interv_idx2] = "do(druk=8)"
+    druk[interv_idx2] = 8
+
+    # Recalculeer na interventies
+    for idx in np.concatenate([interv_idx, interv_idx2]):
+        menging[idx] = 0.5 + 0.4 * (1 - np.exp(-roersnelheid[idx] / 200)) + np.random.normal(0, 0.03)
+        reactor_temp[idx] = 150 + 0.5 * (koelwater_temp[idx] - 15) + 2 * (druk[idx] - 5) - 0.3 * (activeringsenergie[idx] - 50) + np.random.normal(0, 2)
+        conversie[idx] = 0.6 + 0.003 * (reactor_temp[idx] - 150) + 0.01 * (druk[idx] - 5) + 0.15 * menging[idx] - 0.002 * (activeringsenergie[idx] - 50) + np.random.normal(0, 0.02)
+        conversie[idx] = np.clip(conversie[idx], 0.1, 0.99)
+        opbrengst[idx] = conversie[idx] * selectiviteit[idx] * 100 + np.random.normal(0, 1)
+
+    df = pd.DataFrame({
+        "sample_id": [f"CI-{i:05d}" for i in range(n)],
+        "interventie": interventie,
+        # Exogeen
+        "omgevingstemp_C": np.round(omgevingstemp, 1),
+        "operator_ervaring_jaar": np.round(operator_ervaring, 1),
+        "katalysator_type": katalysator_type,
+        # Causale variabelen
+        "roersnelheid_RPM": np.round(roersnelheid, 0).astype(int),
+        "koelwater_temp_C": np.round(koelwater_temp, 1),
+        "luchtvochtigheid_pct": np.round(luchtvochtigheid, 1),
+        "druk_bar": np.round(druk, 2),
+        "activeringsenergie_kJmol": np.round(activeringsenergie, 1),
+        "reactor_temp_C": np.round(reactor_temp, 1),
+        "menging_index": np.round(menging, 3),
+        "selectiviteit": np.round(selectiviteit, 3),
+        "conversie": np.round(conversie, 4),
+        "opbrengst_pct": np.round(opbrengst, 1),
+        "energieverbruik_kWh": np.round(energieverbruik, 1),
+        "vochtgehalte_product_pct": np.round(vochtgehalte_product, 2),
+    })
+
+    # Voeg bekende DAG toe als metadata in apart bestand
+    dag_edges = [
+        ("omgevingstemp_C", "koelwater_temp_C"),
+        ("omgevingstemp_C", "luchtvochtigheid_pct"),
+        ("koelwater_temp_C", "reactor_temp_C"),
+        ("druk_bar", "reactor_temp_C"),
+        ("druk_bar", "conversie"),
+        ("activeringsenergie_kJmol", "reactor_temp_C"),
+        ("katalysator_type", "activeringsenergie_kJmol"),
+        ("katalysator_type", "selectiviteit"),
+        ("reactor_temp_C", "conversie"),
+        ("reactor_temp_C", "selectiviteit"),
+        ("operator_ervaring_jaar", "roersnelheid_RPM"),
+        ("roersnelheid_RPM", "menging_index"),
+        ("roersnelheid_RPM", "energieverbruik_kWh"),
+        ("menging_index", "conversie"),
+        ("conversie", "opbrengst_pct"),
+        ("selectiviteit", "opbrengst_pct"),
+        ("luchtvochtigheid_pct", "vochtgehalte_product_pct"),
+        ("reactor_temp_C", "vochtgehalte_product_pct"),
+        ("reactor_temp_C", "energieverbruik_kWh"),
+    ]
+    dag_df = pd.DataFrame(dag_edges, columns=["oorzaak", "gevolg"])
+    dag_df.to_csv("data/causal_dag_structuur.csv", index=False)
+
+    df.to_csv("data/causal_inference_proces.csv", index=False)
+    print(f"causal_inference_proces.csv: {len(df)} rijen, {len(df.columns)} kolommen")
+    print(f"causal_dag_structuur.csv: {len(dag_df)} rijen (bekende DAG edges)")
+
+
+def generate_federated_learning():
+    """
+    Dataset 44: Federated Learning - 4 farmaceutische productiesites met dezelfde
+    productielijn maar lokale variaties. Data mag niet gecombineerd worden (privacy).
+    Doel: Federated learning, privacy-preserving ML, model aggregatie.
+    """
+    sites = {
+        "Site_NL": {"n": 500, "temp_offset": 0, "humidity": 45, "skill_level": 0.9, "equipment_age": 2},
+        "Site_DE": {"n": 400, "temp_offset": -2, "humidity": 40, "skill_level": 0.85, "equipment_age": 5},
+        "Site_US": {"n": 600, "temp_offset": 3, "humidity": 55, "skill_level": 0.8, "equipment_age": 1},
+        "Site_IN": {"n": 300, "temp_offset": 8, "humidity": 70, "skill_level": 0.75, "equipment_age": 8},
+    }
+
+    all_rows = []
+    for site_name, props in sites.items():
+        n = props["n"]
+
+        # Procesparameters (lokaal gemeten)
+        temp = np.random.normal(150 + props["temp_offset"], 3, n)
+        pressure = np.random.normal(5, 0.3, n)
+        flow = np.random.normal(100, 5, n)
+        humidity = np.random.normal(props["humidity"], 3, n)
+        stir_speed = np.random.normal(250 * props["skill_level"] / 0.85, 20, n)
+
+        # Grondstof (lokale leveranciers)
+        api_purity = np.random.normal(99.5, 0.2, n)
+        excipient_moisture = np.random.normal(2 + props["humidity"] * 0.01, 0.3, n)
+
+        # Equipment effect (ouder = meer variatie)
+        equipment_noise = 0.5 * props["equipment_age"] / 5
+
+        # Target: productkwaliteit
+        quality = (
+            85
+            + 0.3 * (temp - 150)
+            - 2 * (humidity - 50) / 10
+            + 0.1 * stir_speed / 10
+            + 1.5 * (api_purity - 99.5)
+            - 3 * (excipient_moisture - 2)
+            + 0.5 * pressure
+            - 0.01 * flow
+            + np.random.normal(0, 1 + equipment_noise, n)
+        )
+        quality = np.clip(quality, 50, 100)
+
+        # Dissolution
+        dissolution = (
+            90
+            - 0.5 * (quality - 85) * 0.3
+            + 0.1 * (temp - 150)
+            + np.random.normal(0, 2, n)
+        )
+        dissolution = np.clip(dissolution, 50, 100)
+
+        # Goedkeuring
+        approved = ((quality > 75) & (dissolution > 75)).astype(int)
+
+        # Data verdeling per site (niet-IID: verschillende distributies)
+        for i in range(n):
+            all_rows.append({
+                "sample_id": f"{site_name}-{i:04d}",
+                "site": site_name,
+                "temperatuur_C": round(temp[i], 1),
+                "druk_bar": round(pressure[i], 2),
+                "debiet_kgh": round(flow[i], 1),
+                "luchtvochtigheid_pct": round(humidity[i], 1),
+                "roersnelheid_RPM": round(stir_speed[i], 0),
+                "API_zuiverheid_pct": round(api_purity[i], 2),
+                "excipient_vocht_pct": round(excipient_moisture[i], 2),
+                "equipment_leeftijd_jaar": props["equipment_age"],
+                "kwaliteitsscore": round(quality[i], 1),
+                "dissolutie_pct": round(dissolution[i], 1),
+                "goedgekeurd": approved[i],
+            })
+
+    df = pd.DataFrame(all_rows)
+    df.to_csv("data/federated_learning_sites.csv", index=False)
+    print(f"federated_learning_sites.csv: {len(df)} rijen, {len(df.columns)} kolommen")
+
+    # Ook per-site bestanden voor echte FL simulatie
+    for site_name in sites:
+        site_df = df[df["site"] == site_name].copy()
+        site_df.to_csv(f"data/fl_site_{site_name.lower()}.csv", index=False)
+
+
+def generate_timeseries_foundation():
+    """
+    Dataset 45: Time-Series Foundation Model data - Lange multivariate tijdreeks
+    met 50 kanalen van een complete chemische plant. 2 jaar, elke 5 minuten.
+    Doel: Foundation model pre-training, forecasting, imputation, anomaly detection.
+    """
+    n = 2 * 365 * 24 * 12  # 2 jaar, elke 5 min
+    t = np.arange(n)
+
+    # Downsample timestamps genereren
+    timestamps = [datetime(2023, 1, 1) + timedelta(minutes=int(i * 5)) for i in t]
+
+    # Tijdfeatures
+    hour = np.array([ts.hour + ts.minute / 60 for ts in timestamps])
+    day_of_year = np.array([ts.timetuple().tm_yday for ts in timestamps])
+    day_of_week = np.array([ts.weekday() for ts in timestamps])
+
+    # Seizoens- en dagcycli
+    yearly = np.sin(2 * np.pi * day_of_year / 365)
+    daily = np.sin(2 * np.pi * hour / 24)
+    weekly = np.sin(2 * np.pi * day_of_week / 7)
+
+    # --- 50 kanalen genereren ---
+    channels = {}
+
+    # Groep 1: Reactorsectie (10 kanalen)
+    channels["R_temp_C"] = 180 + 5 * yearly + 2 * daily + np.random.normal(0, 0.5, n)
+    channels["R_druk_bar"] = 8 + 0.3 * yearly + np.random.normal(0, 0.05, n)
+    channels["R_niveau_pct"] = 60 + 5 * daily + np.random.normal(0, 1, n)
+    channels["R_voeding_kgh"] = 100 + 10 * daily - 5 * (day_of_week >= 5).astype(float) + np.random.normal(0, 1, n)
+    channels["R_conversie"] = 0.85 + 0.02 * yearly + 0.005 * daily + np.random.normal(0, 0.005, n)
+    channels["R_roerder_RPM"] = 200 + np.random.normal(0, 2, n)
+    channels["R_koelwater_in_C"] = 20 + 8 * yearly + 3 * daily + np.random.normal(0, 0.3, n)
+    channels["R_koelwater_uit_C"] = channels["R_koelwater_in_C"] + 15 + 2 * (channels["R_temp_C"] - 180) / 5 + np.random.normal(0, 0.3, n)
+    channels["R_pH"] = 7.0 + 0.2 * np.sin(2 * np.pi * t / (288 * 3)) + np.random.normal(0, 0.05, n)
+    channels["R_viscositeit_mPas"] = 50 + 5 * yearly + np.random.normal(0, 1, n)
+
+    # Groep 2: Scheidingssectie (10 kanalen)
+    channels["S_kolom_top_C"] = 78 + 2 * yearly + np.random.normal(0, 0.3, n)
+    channels["S_kolom_bodem_C"] = 120 + 3 * yearly + np.random.normal(0, 0.3, n)
+    channels["S_reflux_ratio"] = 3.0 + 0.2 * np.sin(2 * np.pi * t / (288 * 7)) + np.random.normal(0, 0.05, n)
+    channels["S_reboiler_kW"] = 200 + 20 * yearly + 10 * daily + np.random.normal(0, 3, n)
+    channels["S_condenser_kW"] = -150 - 15 * yearly + np.random.normal(0, 2, n)
+    channels["S_drukval_mbar"] = 50 + 5 * np.sin(2 * np.pi * t / (288 * 30)) + np.random.normal(0, 1, n)
+    channels["S_product_zuiverheid"] = 0.995 + 0.002 * yearly + np.random.normal(0, 0.001, n)
+    channels["S_product_flow_kgh"] = 80 + 8 * daily + np.random.normal(0, 1, n)
+    channels["S_afval_flow_kgh"] = 20 + 2 * daily + np.random.normal(0, 0.5, n)
+    channels["S_dampflow_kgh"] = 50 + 5 * daily + np.random.normal(0, 1, n)
+
+    # Groep 3: Warmtewisseling & utiliteiten (10 kanalen)
+    channels["U_stoom_tonh"] = 25 + 5 * yearly + 3 * daily + np.random.normal(0, 0.5, n)
+    channels["U_stoom_druk_bar"] = 10 + np.random.normal(0, 0.1, n)
+    channels["U_koelwater_m3h"] = 150 + 30 * yearly + 10 * daily + np.random.normal(0, 3, n)
+    channels["U_koeltoren_C"] = 25 + 10 * yearly + np.random.normal(0, 0.5, n)
+    channels["U_elektra_kW"] = 400 + 50 * daily - 30 * (day_of_week >= 5).astype(float) + np.random.normal(0, 10, n)
+    channels["U_perslucht_bar"] = 7 + np.random.normal(0, 0.05, n)
+    channels["U_N2_Nm3h"] = 30 + 5 * daily + np.random.normal(0, 1, n)
+    channels["U_WKK_kW"] = 200 + 20 * daily + np.random.normal(0, 5, n)
+    channels["U_buitentemp_C"] = 10 + 12 * yearly + 5 * daily + np.random.normal(0, 1, n)
+    channels["U_windsnelheid_ms"] = 4 + 2 * np.abs(np.random.normal(0, 1, n))
+
+    # Groep 4: Kwaliteit & lab (10 kanalen)
+    channels["Q_product_pct"] = 99.5 + 0.1 * yearly + np.random.normal(0, 0.1, n)
+    channels["Q_onzuiverheid_A_ppm"] = 50 - 5 * yearly + np.random.exponential(5, n)
+    channels["Q_onzuiverheid_B_ppm"] = 20 + np.random.exponential(3, n)
+    channels["Q_kleur_hazen"] = 10 + 3 * yearly + np.random.exponential(1, n)
+    channels["Q_dichtheid_gcm3"] = 1.05 + 0.002 * yearly + np.random.normal(0, 0.001, n)
+    channels["Q_watergehalte_ppm"] = 200 + 50 * yearly + np.random.exponential(20, n)
+    channels["Q_zuurgraad_mgKOHg"] = 0.1 + np.random.exponential(0.02, n)
+    channels["Q_viscositeit_cSt"] = 15 + 2 * yearly + np.random.normal(0, 0.3, n)
+    channels["Q_smeltpunt_C"] = 65 + np.random.normal(0, 0.2, n)
+    channels["Q_hardheid_shore"] = 80 + np.random.normal(0, 2, n)
+
+    # Groep 5: Milieu & veiligheid (10 kanalen)
+    channels["M_emissie_NOx_mgNm3"] = 80 + 10 * yearly + np.random.exponential(5, n)
+    channels["M_emissie_SO2_mgNm3"] = 30 + 5 * yearly + np.random.exponential(3, n)
+    channels["M_emissie_stof_mgNm3"] = 5 + np.random.exponential(1, n)
+    channels["M_afvalwater_COD_mgL"] = 100 + 20 * daily + np.random.exponential(10, n)
+    channels["M_afvalwater_pH"] = 7 + 0.3 * np.sin(2 * np.pi * t / 288) + np.random.normal(0, 0.1, n)
+    channels["M_geluid_dBA"] = 75 + 3 * daily + np.random.normal(0, 1, n)
+    channels["M_gasdetectie_LEL_pct"] = np.random.exponential(0.5, n)
+    channels["M_brandmelders_actief"] = (np.random.random(n) < 0.001).astype(int)
+    channels["M_noodstop_actief"] = (np.random.random(n) < 0.0002).astype(int)
+    channels["M_productie_ton"] = 3 + 0.5 * daily - 0.3 * (day_of_week >= 5).astype(float) + np.random.normal(0, 0.1, n)
+
+    # --- Injecteren van realistische patronen ---
+
+    # Onderhoudsstops (4 per jaar, elk 5 dagen)
+    for year_offset in range(2):
+        for stop_day in [60, 150, 240, 330]:
+            start = (year_offset * 365 + stop_day) * 288
+            end = min(start + 5 * 288, n)
+            if start < n:
+                for key in channels:
+                    if key.startswith(("R_", "S_")):
+                        channels[key][start:end] *= 0.3
+
+    # Seizoensgebonden anomalieën
+    # Hittegolf zomer jaar 1
+    heatwave_start = 180 * 288
+    heatwave_end = heatwave_start + 10 * 288
+    channels["U_buitentemp_C"][heatwave_start:heatwave_end] += 10
+    channels["U_koelwater_m3h"][heatwave_start:heatwave_end] += 50
+    channels["U_koeltoren_C"][heatwave_start:heatwave_end] += 5
+
+    # Vorstperiode winter jaar 2
+    frost_start = (365 + 30) * 288
+    frost_end = frost_start + 7 * 288
+    if frost_end < n:
+        channels["U_buitentemp_C"][frost_start:frost_end] -= 15
+        channels["U_stoom_tonh"][frost_start:frost_end] += 10
+
+    # Missing data (random sensor uitval)
+    for key in list(channels.keys())[:20]:
+        n_missing = np.random.randint(50, 200)
+        missing_starts = np.random.randint(0, n - 12, n_missing)
+        for ms in missing_starts:
+            duration = np.random.randint(1, 12)
+            channels[key][ms:ms+duration] = np.nan
+
+    # Clip alle kanalen
+    for key in channels:
+        channels[key] = np.clip(channels[key], -1000, 100000) if not np.isnan(channels[key]).all() else channels[key]
+
+    # Rond af
+    data = {"timestamp": timestamps}
+    for key, values in channels.items():
+        precision = 1 if "pct" in key or "C" in key or "kgh" in key else (3 if "zuiverheid" in key or "conversie" in key else 1)
+        data[key] = [round(v, precision) if not np.isnan(v) else None for v in values]
+
+    df = pd.DataFrame(data)
+
+    # Downsample naar elke 15 min voor bestandsgrootte (nog steeds groot)
+    df = df.iloc[::3].reset_index(drop=True)
+    df.to_csv("data/timeseries_foundation_plant.csv", index=False)
+    print(f"timeseries_foundation_plant.csv: {len(df)} rijen, {len(df.columns)} kolommen")
+
+
 if __name__ == "__main__":
     print("=== Datasets genereren voor ML in Process Engineering ===\n")
     generate_batch_reactor()
@@ -4229,4 +4893,9 @@ if __name__ == "__main__":
     generate_virtual_metrology()
     generate_extruder()
     generate_membrane_filtration()
+    generate_sensor_fusion()
+    generate_concept_drift_longterm()
+    generate_causal_inference()
+    generate_federated_learning()
+    generate_timeseries_foundation()
     print("\nKlaar! Alle datasets staan in de 'data/' map.")

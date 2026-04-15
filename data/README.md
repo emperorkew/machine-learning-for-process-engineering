@@ -49,6 +49,12 @@ Alle data wordt gegenereerd met `generate_datasets.py` (seed=42 voor reproduceer
 | 38 | `virtual_metrology.csv` | 3000 | 20 | Semi-supervised ML |
 | 39 | `extrusie_hotmelt.csv` | 17280 | 28 | Continue productie |
 | 40 | `membraan_filtratie.csv` | 17280 | 18 | Procesmonitoring |
+| 41 | `sensor_fusion.csv` | 1440 | 29 | Sensor Fusion |
+| 42 | `concept_drift_5jaar.csv` | 10950 | 16 | Concept Drift |
+| 43 | `causal_inference_proces.csv` | 5000 | 17 | Causal Inference |
+| 43b | `causal_dag_structuur.csv` | 19 | 2 | Causal DAG (ground truth) |
+| 44 | `federated_learning_sites.csv` | 1800 | 13 | Federated Learning |
+| 45 | `timeseries_foundation_plant.csv` | 70080 | 51 | Foundation Models |
 
 ---
 
@@ -1032,6 +1038,132 @@ Alle data wordt gegenereerd met `generate_datasets.py` (seed=42 voor reproduceer
 
 ---
 
+### 41. Sensor Fusion (`sensor_fusion.csv`)
+
+**Context:** 12 sensoren meten 4 procesgrootheden (temperatuur, druk, debiet, niveau) met verschillende technologieën, nauwkeurigheden en faalmodi. 60 dagen, per uur.
+
+**Kolommen:**
+- `timestamp` - tijdstip
+- `temp_werkelijk_C`, `druk_werkelijk_bar`, `debiet_werkelijk_kgh`, `niveau_werkelijk_pct` - **ground truth**
+- **Temperatuur (4 sensoren):**
+  - `T1_thermokoppel_C` (snel, drift na dag 30, uitval dag 50-51)
+  - `T2_RTD_C` (nauwkeurig, 3 uur vertraging)
+  - `T3_IR_C` (snel, stoom-interferentie ~5% van metingen)
+  - `T4_thermistor_C` (niet-lineair, saturatie boven 165°C)
+- **Druk (3 sensoren):**
+  - `P1_capacitief_bar` (nauwkeurig)
+  - `P2_piezo_bar` (bevroren waarde dag 20-22)
+  - `P3_bourdon_bar` (hysterese)
+- **Debiet (3 sensoren):**
+  - `F1_coriolis_kgh` (zeer nauwkeurig)
+  - `F2_vortex_kgh` (onbetrouwbaar bij laag debiet)
+  - `F3_DP_kgh` (kalibratie drift over tijd)
+- **Niveau (2 sensoren):**
+  - `L1_radar_pct` (schuim interferentie)
+  - `L2_DP_pct` (stabiel)
+- `*_status` - sensorstatus labels per sensor
+
+**ML-toepassingen:** Sensor fusion (Kalman filter, gewogen gemiddelde), sensor fault detection & isolation, data reconciliation, missing data imputation, beste schatting berekening.
+
+**Bijzonderheden:** Elke sensor heeft een uniek faalgedrag. Ground truth beschikbaar voor validatie. Combinatie van drift, uitval, bevriezing, saturatie, niet-lineariteit.
+
+---
+
+### 42. Concept Drift 5 Jaar (`concept_drift_5jaar.csv`)
+
+**Context:** 5 jaar procesdata (2020-2024) van een chemische reactor met geleidelijke en abrupte veranderingen. Model getraind op jaar 1 wordt steeds slechter. Elke 4 uur.
+
+**Kolommen:**
+- `timestamp`, `jaar`, `kwartaal` - tijdsindeling
+- `voeding_kwaliteit`, `temperatuur_C`, `druk_bar`, `debiet_kgh`, `omgevingstemp_C` - procesparameters
+- `katalysator_leeftijd_dagen` - dagen sinds laatste katalysatorvervanging (elke 6 maanden)
+- `fouling_index` - warmtewisselaar fouling (elke 90 dagen gereinigd)
+- `conversie` - **target (regressie):** procesconversie
+- `energieverbruik_kWh` - **target (regressie):** energieverbruik
+- `model_voorspelling` - voorspelling van jaar-1 model (veroudert)
+- `model_fout`, `model_abs_fout` - residuen (groeien over tijd)
+- `drift_type` - **target (classificatie):** geen / katalysator_veroudering / fouling / leverancier_wissel / equipment_upgrade / regelgeving_aanpassing
+
+**5 driftmechanismen:**
+1. **Geleidelijk:** Katalysatorveroudering (elke 6 maanden vervangen)
+2. **Abrupt:** Nieuwe leverancier (jaar 2, maand 3)
+3. **Geleidelijk:** Fouling opbouw (elke 90 dagen gereinigd)
+4. **Abrupt:** Equipment upgrade (jaar 3, maand 6)
+5. **Abrupt:** Nieuwe regelgeving (jaar 4)
+
+**ML-toepassingen:** Concept drift detectie (DDM, ADWIN, Page-Hinkley), adaptief modelleren, model monitoring, retraining strategie, window-based vs. ensemble methoden.
+
+---
+
+### 43. Causal Inference Proces (`causal_inference_proces.csv` + `causal_dag_structuur.csv`)
+
+**Context:** Chemisch proces met **bekende causale structuur** (19 edges). Bevat observatiedata (4600 samples) en interventiedata (400 samples met do-operator).
+
+**Kolommen:**
+- `sample_id` - sample identifier
+- `interventie` - observatie / do(roersnelheid=300) / do(druk=8)
+- `omgevingstemp_C`, `operator_ervaring_jaar` - exogene variabelen
+- `katalysator_type` - Pd/C / Pt/Al2O3 / Ni/SiO2
+- `roersnelheid_RPM` - **confounder:** beïnvloed door operator ervaring
+- `koelwater_temp_C` - beïnvloed door omgevingstemperatuur
+- `luchtvochtigheid_pct` - beïnvloed door omgeving
+- `druk_bar` - instelbaar, beïnvloedt temp én conversie
+- `activeringsenergie_kJmol` - bepaald door katalysatortype
+- `reactor_temp_C` - **mediator:** beïnvloed door koelwater, druk, activeringsenergie
+- `menging_index` - niet-lineaire functie van roersnelheid
+- `selectiviteit` - bepaald door katalysator en temperatuur
+- `conversie` - **target:** centraal in de causale keten
+- `opbrengst_pct` - conversie × selectiviteit
+- `energieverbruik_kWh`, `vochtgehalte_product_pct` - secundaire targets
+
+**Begeleidend bestand:** `causal_dag_structuur.csv` bevat de 19 bekende causale relaties (oorzaak -> gevolg).
+
+**ML-toepassingen:** Causal discovery (PC, FCI, GES algoritmen), causal effect estimation, do-calculus, counterfactual analysis, confounder identificatie, vergelijking met correlatie-gebaseerde methoden.
+
+**Bijzonderheden:** Bekende DAG als ground truth voor validatie. Confounders (operator->roersnelheid), mediators (temp->conversie), en interventiedata voor causal effect verificatie.
+
+---
+
+### 44. Federated Learning Sites (`federated_learning_sites.csv`)
+
+**Context:** 4 farmaceutische productiesites (NL, DE, US, IN) met dezelfde productielijn maar lokale variaties in klimaat, ervaring, equipmentleeftijd en grondstofkwaliteit. Data mag niet gecombineerd worden.
+
+**Kolommen:**
+- `sample_id`, `site` - identificatie (Site_NL / Site_DE / Site_US / Site_IN)
+- `temperatuur_C`, `druk_bar`, `debiet_kgh` - procesparameters
+- `luchtvochtigheid_pct` - lokaal klimaat (NL: 45%, IN: 70%)
+- `roersnelheid_RPM` - beïnvloed door operator skill level
+- `API_zuiverheid_pct`, `excipient_vocht_pct` - grondstofkwaliteit
+- `equipment_leeftijd_jaar` - equipmentleeftijd (US: 1 jaar, IN: 8 jaar)
+- `kwaliteitsscore` - **target (regressie):** productkwaliteit
+- `dissolutie_pct` - **target (regressie):** dissolutie
+- `goedgekeurd` - **target (classificatie):** 1 = goedgekeurd
+
+**Per-site bestanden:** `fl_site_site_nl.csv`, `fl_site_site_de.csv`, `fl_site_site_us.csv`, `fl_site_site_in.csv`
+
+**ML-toepassingen:** Federated learning (FedAvg, FedProx), non-IID data handling, privacy-preserving ML, model aggregatie, vergelijking centraal vs. federatief.
+
+**Bijzonderheden:** Non-IID data: elke site heeft andere verdeling (klimaat, skill, equipment). NL (500) vs. IN (300) samples - ongebalanceerd. Equipment leeftijd veroorzaakt meer ruis bij oudere sites.
+
+---
+
+### 45. Time-Series Foundation Model (`timeseries_foundation_plant.csv`)
+
+**Context:** 2 jaar complete plant data met 50 kanalen (5 groepen: reactor, scheiding, utiliteiten, kwaliteit, milieu). Elke 15 minuten. Geschikt voor pre-training van time-series foundation models.
+
+**50 kanalen in 5 groepen:**
+- **Reactor (10):** R_temp, R_druk, R_niveau, R_voeding, R_conversie, R_roerder, R_koelwater_in/uit, R_pH, R_viscositeit
+- **Scheiding (10):** S_kolom_top/bodem_temp, S_reflux, S_reboiler/condenser, S_drukval, S_product_zuiverheid/flow, S_afval/dampflow
+- **Utiliteiten (10):** U_stoom, U_koelwater, U_koeltoren, U_elektra, U_perslucht, U_N2, U_WKK, U_buitentemp, U_windsnelheid
+- **Kwaliteit (10):** Q_product, Q_onzuiverheden_A/B, Q_kleur, Q_dichtheid, Q_water, Q_zuurgraad, Q_viscositeit, Q_smeltpunt, Q_hardheid
+- **Milieu (10):** M_emissie_NOx/SO2/stof, M_afvalwater_COD/pH, M_geluid, M_gasdetectie, M_brandmelders, M_noodstop, M_productie
+
+**ML-toepassingen:** Foundation model pre-training, multivariate forecasting, missing data imputation, anomalie-detectie, cross-channel correlatie, zero-shot transfer.
+
+**Bijzonderheden:** 70.080 tijdspunten × 51 kolommen. Seizoens-, week- en dagpatronen. 4 onderhoudsstops per jaar. Hittegolf en vorstperiode events. Random missing data (~1-2%). Realistische cross-correlaties tussen kanalen.
+
+---
+
 ## Gebruik
 
 ```bash
@@ -1074,7 +1206,7 @@ df = pd.read_csv("data/batch_reactor_yield.csv")
 | GMP/cleanroom monitoring | 27, 28 |
 | Golden batch / MPCA | 29 |
 | Model Predictive Control analyse | 30 |
-| Digital twin / concept drift | 31 |
+| Digital twin / concept drift | 31, 42 |
 | NLP / text mining | 32, 37 |
 | Multi-product receptoptimalisatie | 33 |
 | Reinforcement learning | 34 |
@@ -1083,3 +1215,10 @@ df = pd.read_csv("data/batch_reactor_yield.csv")
 | Virtual metrology / missing labels | 38 |
 | Extrusie / PAT (Raman) | 39 |
 | Membraanfiltratie / fouling | 40 |
+| Sensor fusion / data reconciliation | 41 |
+| Concept drift detectie (langetermijn) | 42 |
+| Causal inference / causal discovery | 43 |
+| Federated learning | 44 |
+| Time-series foundation models | 45 |
+| Missing data imputation | 41, 45 |
+| Multivariate forecasting | 23, 42, 45 |
