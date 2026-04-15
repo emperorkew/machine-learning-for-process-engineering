@@ -39,6 +39,16 @@ Alle data wordt gegenereerd met `generate_datasets.py` (seed=42 voor reproduceer
 | 28 | `cleanroom_monitoring.csv` | 25920 | 14 | GMP Monitoring |
 | 29 | `golden_batch_coating.csv` | 9600 | 15 | Batchanalyse |
 | 30 | `mpc_destillatie.csv` | 2880 | 19 | Procesautomatisering |
+| 31 | `digital_twin_validatie.csv` | 4320 | 18 | Industry 4.0 |
+| 32 | `operator_logboeken.csv` | 1095 | 14 | Industry 4.0 / NLP |
+| 33 | `recept_optimalisatie.csv` | 800 | 29 | Industry 4.0 |
+| 34 | `rl_reactor_control.csv` | 1668 | 19 | Reinforcement Learning |
+| 35 | `transfer_learning_reactoren.csv` | 2100 | 12 | Transfer Learning |
+| 36 | `active_learning_pool.csv` | 5000 | 16 | Active Learning |
+| 37 | `nlp_onderhoudslogboek.csv` | 3000 | 17 | NLP / Text Mining |
+| 38 | `virtual_metrology.csv` | 3000 | 20 | Semi-supervised ML |
+| 39 | `extrusie_hotmelt.csv` | 17280 | 28 | Continue productie |
+| 40 | `membraan_filtratie.csv` | 17280 | 18 | Procesmonitoring |
 
 ---
 
@@ -787,6 +797,241 @@ Alle data wordt gegenereerd met `generate_datasets.py` (seed=42 voor reproduceer
 
 ---
 
+### 31. Digital Twin Validatie (`digital_twin_validatie.csv`)
+
+**Context:** Vergelijking tussen een fysiek procesmodel (digital twin) en werkelijke reactordata. Het model veroudert geleidelijk doordat het geen rekening houdt met katalysatordegradatie. Elke 10 minuten, 30 dagen.
+
+**Kolommen:**
+- `timestamp` - tijdstip
+- `voeding_flow_kgh`, `voeding_temp_C` - procesomstandigheden
+- `reactor_temp_werkelijk_C`, `conversie_werkelijk`, `product_temp_werkelijk_C`, `energie_werkelijk_kW` - werkelijke proceswaarden
+- `reactor_temp_model_C`, `conversie_model`, `product_temp_model_C`, `energie_model_kW` - digital twin voorspellingen
+- `residu_temp_C`, `residu_conversie`, `residu_energie_kW` - model-werkelijk residuen
+- `model_confidence` - vertrouwensscore van het model (0-1)
+- `drift_score` - **target (regressie):** mate van model-werkelijkheid afwijking
+- `drift_gedetecteerd` - **target (classificatie):** 1 = significante drift
+- `event` - normaal / katalysator_shift (dag 20)
+
+**ML-toepassingen:** Concept drift detectie, modelkalibratie, residuanalyse, adaptief modelleren, anomalie-detectie in model-werkelijkheid verschil.
+
+**Bijzonderheden:** Geleidelijke modelveroudering door katalysatordegradatie. Abrupte procesverandering op dag 20. Model heeft licht andere coëfficiënten dan werkelijkheid.
+
+---
+
+### 32. Operator Logboeken (`operator_logboeken.csv`)
+
+**Context:** Shift logboeken van operators in een chemische plant over 1 jaar. Elke shift (dag/avond/nacht) bevat gestructureerde tekst met notities, incidenten en handover-informatie.
+
+**Kolommen:**
+- `log_id` - uniek logboek ID
+- `datum` - datum
+- `shift` - dag / avond / nacht
+- `operator` - operatornaam
+- `dag_type` - werkdag / weekend
+- `logboek_tekst` - **input (NLP):** vrije tekst met meerdere entries gescheiden door "|"
+- `handover_notitie` - overdrachtsnotitie voor volgende shift
+- `n_entries` - aantal logboekentries
+- `n_alarmen` - aantal alarmen tijdens shift
+- `productie_ton` - productie (ton)
+- `OEE` - Overall Equipment Effectiveness
+- `heeft_incident` - **target (classificatie):** 1 = incident tijdens shift
+- `ernst` - normaal / laag / medium / hoog / kritiek
+- `categorie` - routine / storing / kwaliteit / veiligheid / proces
+
+**ML-toepassingen:** Tekstclassificatie (incident detectie), NER (equipment, parameters), sentimentanalyse, trend-detectie over tijd, shift-vergelijking.
+
+**Bijzonderheden:** Mix van normale en incident-gerelateerde logboeken. Variatie in schrijfstijl per operator. Weekend/nacht shifts hebben minder activiteit.
+
+---
+
+### 33. Multi-product Receptoptimalisatie (`recept_optimalisatie.csv`)
+
+**Context:** 5 farmaceutische producten op 1 productielijn. 800 batches met variërende grondstofkwaliteit, receptinstellingen en seizoenseffecten.
+
+**Kolommen:**
+- `batch_id`, `datum`, `seizoen` - identificatie en timing
+- `product` - Paracetamol_500mg / Ibuprofen_400mg / Aspirine_300mg / Metformin_850mg / Omeprazol_20mg
+- `leverancier` - Sup_A / Sup_B / Sup_C
+- `API_zuiverheid_pct`, `API_vochtgehalte_pct`, `API_deeltjesgrootte_d50_um`, `API_bulkdichtheid_gmL` - grondstofeigenschappen
+- `granulatie_water_pct`, `mengtijd_min`, `perskracht_kN`, `perssnelheid_RPM` - receptparameters
+- `droogtemp_C`, `droogtijd_min`, `coatingtijd_min` - procesparameters
+- `ruimte_temp_C`, `ruimte_RV_pct` - omgevingscondities
+- `gewicht_mg`, `hardheid_N`, `dissolutie_pct`, `brosheid_pct` - productkwaliteit
+- `gehalte_uniformiteit_RSD`, `restvochtgehalte_pct` - aanvullende kwaliteit
+- `coating_gewichtstoename_pct`, `uiterlijk_score` - coating resultaat
+- `cyclustijd_min`, `batchkosten_EUR` - efficiëntie
+- `goedgekeurd` - **target (classificatie):** 1 = voldoet aan alle specs
+
+**ML-toepassingen:** Product-specifieke modellering, multi-task learning, receptoptimalisatie, seizoenscorrectie, leverancierseffect analyse, kostenoptimalisatie.
+
+**Bijzonderheden:** 5 producten met verschillende complexiteit. Seizoenseffect op vochtigheid. Interactie grondstofkwaliteit x receptinstellingen. 29 features.
+
+---
+
+### 34. Reinforcement Learning Reactor (`rl_reactor_control.csv`)
+
+**Context:** Offline RL dataset voor reactortemperatuurregeling. 200 episodes met data van 4 verschillende control policies (PID conservatief/agressief, expert, random).
+
+**Kolommen:**
+- `episode`, `stap` - episode en stap index
+- `policy` - PID_conservatief / PID_agressief / expert / random
+- `setpoint_C` - temperatuur setpoint (145/150/155/160°C)
+- `state_temp_C`, `state_conc_molL`, `state_coolant_C` - toestandsvariabelen
+- `state_error_C` - tracking error
+- `state_verstoring` - externe verstoring
+- `action_coolant_adj` - **actie:** koelwateraanpassing (-10 tot +10 L/min)
+- `reward_tracking`, `reward_energie`, `reward_constraint` - reward componenten
+- `reward_totaal` - **target:** totale beloning per stap
+- `cumulatief_reward` - cumulatieve beloning
+- `next_temp_C`, `next_conc_molL`, `next_coolant_C` - volgende toestand
+- `done` - 1 = episode afgelopen (terminal state of constraint violated)
+
+**ML-toepassingen:** Offline RL (batch RL), policy evaluation, imitation learning, vergelijking control strategieën, reward shaping analyse.
+
+**Bijzonderheden:** 4 policies met sterk verschillende prestaties. Expert policy presteert best. Random policy toont veel constraint violations. State-action-reward-next_state formaat voor directe RL-toepassing.
+
+---
+
+### 35. Transfer Learning Reactoren (`transfer_learning_reactoren.csv`)
+
+**Context:** Dezelfde reactor op 2 locaties (Plant A: 2000 samples, Plant B: 100 samples). Subtiel verschillende proceskarakteristieken (domain shift).
+
+**Kolommen:**
+- `sample_id`, `plant` - identificatie (Plant_A / Plant_B)
+- `temperatuur_C`, `druk_bar`, `debiet_kgh`, `katalysator_kgh`, `voeding_conc_molL` - procesparameters
+- `conversie` - **target (regressie):** conversiegraad
+- `selectiviteit` - **target (regressie):** selectiviteit
+- `opbrengst_pct` - conversie × selectiviteit × 100
+- `energie_kWh` - energieverbruik
+- `heeft_label` - 1 = gelabeld (100% Plant A, 30% Plant B)
+
+**ML-toepassingen:** Domain adaptation, transfer learning, few-shot learning, domain-invariant features, model fine-tuning met beperkte data.
+
+**Bijzonderheden:** Plant B heeft hogere baseline conversie maar lagere selectiviteit. Slechts 100 samples (30% gelabeld) voor target domain. Niet-lineaire relaties met subtiele domeinverschuiving.
+
+---
+
+### 36. Active Learning Pool (`active_learning_pool.csv`)
+
+**Context:** 5000 procesmonsters waarvan slechts 50 (1%) gelabeld. 4 verborgen regimes in de data. Inclusief model-uncertainty scores.
+
+**Kolommen:**
+- `sample_id` - sample identifier
+- `temperatuur_C`, `druk_bar`, `debiet_Lh`, `pH`, `conductiviteit_mScm`, `viscositeit_mPas`, `turbiditeit_NTU`, `opgeloste_O2_mgL` - 8 procesfeatures
+- `kwaliteitsscore` - **target (regressie):** productkwaliteit (0-100)
+- `is_anomalie` - 1 = anomalie (5%)
+- `regime` - verborgen operatieregime (0-3)
+- `is_gelabeld` - 1 = gelabeld (slechts 1%)
+- `model_voorspelling` - voorspelling van initieel model
+- `model_onzekerheid` - **target (query strategie):** modelonzekerheid
+- `informativiteit` - informativeness score voor sample selectie
+
+**ML-toepassingen:** Pool-based active learning, uncertainty sampling, query-by-committee, semi-supervised learning, label-efficiënte modellering.
+
+**Bijzonderheden:** 4 operatieregimes met verschillende kwaliteitsmodellen. 5% anomalieën. Hoge model-onzekerheid bij regime-grenzen. Slechts 50 van 5000 gelabeld.
+
+---
+
+### 37. NLP Onderhoudslogboek (`nlp_onderhoudslogboek.csv`)
+
+**Context:** 3000 onderhoudswerkorders over 2 jaar met gestructureerde velden en vrije-tekst beschrijvingen. 4 equipment systemen, 7+ faalmodi.
+
+**Kolommen:**
+- `werkorder_id` - werkorder identifier
+- `datum` - datum
+- `tag` - equipment tag (bijv. PMP-342)
+- `equipment_type` - pomp / compressor / motor / klep / sensor / etc.
+- `systeem` - mechanisch / elektrisch / instrumentatie / piping
+- `locatie` - Unit_100 / Unit_200 / etc.
+- `werkorder_type` - correctief / preventief / predictief / verbetering / inspectie
+- `prioriteit` - **target (classificatie):** laag / medium / hoog / kritiek
+- `faalmodus` - **target (NER/classificatie):** specifieke faalmodus
+- `beschrijving` - **input (NLP):** vrije tekst met symptoom + actie
+- `responstijd_uur`, `reparatietijd_uur`, `stilstandtijd_uur` - tijden
+- `materiaalkosten_EUR`, `arbeidskosten_EUR`, `totaalkosten_EUR` - kosten
+- `terugkerend` - 1 = terugkerend probleem (15%)
+
+**ML-toepassingen:** Tekstclassificatie, named entity recognition, MTBF/MTTR analyse, kostenvoorspelling, recurring failure detectie, prioriteitsvoorspelling.
+
+**Bijzonderheden:** Realistische werkorderteksten in het Nederlands. Mix van correctief (35%) en preventief (30%) onderhoud. Recurring failures gemarkeerd.
+
+---
+
+### 38. Virtual Metrology (`virtual_metrology.csv`)
+
+**Context:** Procesdata met dure/trage lab-metingen (slechts 10% beschikbaar) en goedkope inline metingen. 3 kamers met subtiele verschillen. Concept drift door onderhoudscycli.
+
+**Kolommen:**
+- `sample_id` - sample identifier
+- `kamer` - Chamber_A / B / C (elk met eigen offset)
+- `positie` - center / edge / corner
+- `onderhoudscyclus` - cyclus sinds laatste onderhoud (1-50)
+- `temp_zone1_C` t/m `temp_zone3_C`, `druk_mbar`, `gasflow_1_sccm`, `gasflow_2_sccm` - procesdata (altijd beschikbaar)
+- `vermogen_W`, `procestijd_min`, `kamer_vochtigheid_pct`, `substraat_temp_C` - aanvullende procesdata
+- `inline_dikte_nm`, `inline_reflectantie` - inline metingen (altijd, maar minder nauwkeurig)
+- `lab_dikte_nm` - **target (regressie):** nauwkeurige diktemeting (slechts 10% beschikbaar)
+- `lab_uniformiteit_pct` - **target (regressie):** uniformiteit (10%)
+- `lab_stress_MPa` - **target (regressie):** stress (10%)
+- `lab_gemeten` - 1 = lab meting beschikbaar
+
+**ML-toepassingen:** Semi-supervised regressie, missing data handling, virtual metrology, multi-output prediction, concept drift (kamer + onderhoud).
+
+**Bijzonderheden:** 90% ontbrekende labels. Kamer-specifieke offsets. Geleidelijke drift door onderhoudscycli. Inline metingen als proxy features met meer ruis.
+
+---
+
+### 39. Hot-Melt Extrusie (`extrusie_hotmelt.csv`)
+
+**Context:** Twin-screw farmaceutische hot-melt extruder met 8 barrel zones. Inline Raman spectroscopie. Data elke 5 seconden, 24 uur.
+
+**Kolommen:**
+- `timestamp` - tijdstip
+- `schroefsnelheid_RPM` - schroeftoerental
+- `voeding_kgh` - voedingssnelheid (kg/h)
+- `torque_pct` - schroef torque (% van max)
+- `SME_kWhkg` - specific mechanical energy (kWh/kg)
+- `die_druk_bar` - druk aan de die
+- `smelt_temp_C` - smelttemperatuur
+- `zone1_temp_C` t/m `zone8_temp_C` - barrel zone temperaturen (actueel)
+- `zone1_sp_C` t/m `zone8_sp_C` - barrel zone setpoints
+- `API_gehalte_pct` - **target (soft sensor):** API-gehalte
+- `degradatie_pct` - **target (regressie):** degradatiepercentage
+- `Raman_API_pct` - inline Raman meting (elke 30 sec, anders leeg)
+- `Raman_gemeten` - 1 = Raman meting beschikbaar
+- `event` - normaal / feeder_puls / heater_fout / materiaal_batch_verschil
+
+**ML-toepassingen:** Soft sensor (API-gehalte uit procesdata), Raman kalibratie, residence time modellering, procesverstoringen detectie.
+
+**Bijzonderheden:** 8 temperatuurzones met thermische interactie. SME als procesindikator. Raman als referentiemeting (elke 30 sec). 3 procesverstoringen.
+
+---
+
+### 40. Membraanfiltratie (`membraan_filtratie.csv`)
+
+**Context:** UF/RO/NF membraanfiltratie voor waterzuivering. 4 modules, 6 maanden per uur. Fouling opbouw met periodieke reinigingscycli.
+
+**Kolommen:**
+- `timestamp` - tijdstip
+- `module_id` - module identifier (MEM-01 t/m MEM-04)
+- `module_type` - RO / UF / NF
+- `voeding_TDS_mgL`, `voeding_turbiditeit_NTU`, `voeding_temp_C`, `voeding_pH` - voedingskwaliteit
+- `voeding_druk_bar` - voedingsdruk
+- `TMP_bar` - **feature:** transmembraandruk (stijgt met fouling)
+- `flux_Lm2h` - **target (regressie):** permeaatflux (L/m²/h)
+- `specifieke_flux_Lm2hbar` - flux genormaliseerd op druk
+- `permeaat_TDS_mgL`, `permeaat_conductiviteit_mScm` - permeaatkwaliteit
+- `recovery` - waterterugwinning (fractie)
+- `fouling_weerstand` - **target (regressie):** fouling factor
+- `SEC_kWhm3` - specifiek energieverbruik (kWh/m³)
+- `is_reiniging` - 1 = tijdens reinigingscyclus
+- `fouling_fase` - **target (classificatie):** schoon / lichte_fouling / matige_fouling / ernstige_fouling / reiniging
+
+**ML-toepassingen:** Fouling voorspelling, reinigingsmoment optimalisatie, flux modellering, seizoenseffect analyse, vergelijking membraantypes.
+
+**Bijzonderheden:** 3 membraantypes (RO/UF/NF) met verschillende fouling-patronen. Seizoenseffect op voedingskwaliteit. Periodieke reinigingscycli (~30 dagen). Biologische, scaling en particulaire fouling componenten.
+
+---
+
 ## Gebruik
 
 ```bash
@@ -803,16 +1048,16 @@ df = pd.read_csv("data/batch_reactor_yield.csv")
 | Techniek | Aanbevolen datasets |
 |----------|-------------------|
 | Lineaire regressie | 1, 3, 4, 19 |
-| Niet-lineaire regressie | 1, 6, 11, 12, 18 |
-| Binaire classificatie | 3, 7, 11, 15, 22, 24, 27 |
-| Multiclass classificatie | 1, 5, 8, 9, 14, 17, 20, 21, 24, 26, 28 |
-| Clustering | 4, 9, 13, 22 |
-| Tijdreeksanalyse | 2, 5, 7, 10, 12, 13, 16, 17, 18, 23, 27 |
-| Anomalie-detectie | 2, 8, 9, 13, 15, 16, 22, 24, 28 |
-| Predictive maintenance | 5, 12, 17, 26 |
-| Procesoptimalisatie | 1, 6, 7, 14, 19, 23, 27, 30 |
+| Niet-lineaire regressie | 1, 6, 11, 12, 18, 33 |
+| Binaire classificatie | 3, 7, 11, 15, 22, 24, 27, 33 |
+| Multiclass classificatie | 1, 5, 8, 9, 14, 17, 20, 21, 24, 26, 28, 37, 40 |
+| Clustering | 4, 9, 13, 22, 36 |
+| Tijdreeksanalyse | 2, 5, 7, 10, 12, 13, 16, 17, 18, 23, 27, 31, 39, 40 |
+| Anomalie-detectie | 2, 8, 9, 13, 15, 16, 22, 24, 28, 31, 36 |
+| Predictive maintenance | 5, 12, 17, 26, 40 |
+| Procesoptimalisatie | 1, 6, 7, 14, 19, 23, 27, 30, 33 |
 | Batch trajectory modelling | 10, 14, 18, 20, 29 |
-| Soft sensor ontwikkeling | 13, 14, 15, 16, 18 |
+| Soft sensor ontwikkeling | 13, 14, 15, 16, 18, 38, 39 |
 | Multivariate procesmonitoring (PCA/PLS) | 13, 15, 16, 17, 21, 25, 29 |
 | Cascade fault detection | 16 |
 | Root cause analysis | 13, 15, 16, 22 |
@@ -829,3 +1074,12 @@ df = pd.read_csv("data/batch_reactor_yield.csv")
 | GMP/cleanroom monitoring | 27, 28 |
 | Golden batch / MPCA | 29 |
 | Model Predictive Control analyse | 30 |
+| Digital twin / concept drift | 31 |
+| NLP / text mining | 32, 37 |
+| Multi-product receptoptimalisatie | 33 |
+| Reinforcement learning | 34 |
+| Transfer learning / domeinadaptatie | 35 |
+| Active learning / semi-supervised | 36, 38 |
+| Virtual metrology / missing labels | 38 |
+| Extrusie / PAT (Raman) | 39 |
+| Membraanfiltratie / fouling | 40 |
